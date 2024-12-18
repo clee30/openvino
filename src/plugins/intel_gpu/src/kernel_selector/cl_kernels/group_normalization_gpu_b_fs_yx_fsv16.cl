@@ -10,7 +10,8 @@ REQD_SUB_GROUP_SIZE(SIMD)
 KERNEL(calc_mean_per_feature)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
-    __global ACCUMULATOR_TYPE* internal_mean
+    __global ACCUMULATOR_TYPE* internal_mean,
+    __global ACCUMULATOR_TYPE* internal_variance
 ) {
     const uint data_set_idx = get_global_id(1);     // batch * feature split
     const uint in_data_set_idx = get_global_id(0);
@@ -26,6 +27,7 @@ KERNEL(calc_mean_per_feature)(
     const uint my_data_offset = data_set_offset + in_data_set_idx;
 
     __local ACCUMULATOR_TYPE mean_per_feature[SLM_SIZE];
+    __local ACCUMULATOR_TYPE local_mean[NUM_GROUPS];
 
     ACCUMULATOR_TYPE mean = ACCUMULATOR_VAL_ZERO;
 
@@ -51,76 +53,52 @@ KERNEL(calc_mean_per_feature)(
 
     if (worker_block_idx == 0 && (f_base + in_data_set_idx) < INPUT0_FEATURE_NUM) {
         mean = mean_per_feature[in_data_set_idx] / TO_ACCUMULATOR_TYPE(data_set_size);
+        //uint bf = b * INPUT0_FEATURE_NUM + f_base + in_data_set_idx;
+        local_mean[get_local_linear_id()] = mean;
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const uint group_size = INPUT0_FEATURE_NUM / NUM_GROUPS;
+    ACCUMULATOR_TYPE group_sum = ACCUMULATOR_VAL_ZERO;
+
+    if (worker_block_idx == 0 && (f_base + in_data_set_idx) < INPUT0_FEATURE_NUM) {
+        group_sum += local_mean[get_local_linear_id()];
+    }
+
+    // Reduce within the workgroup to get the total sum for the group
+    group_sum = work_group_reduce_add(group_sum); // Implement work_group_reduce_add
+
+    // Calculate the mean for the group
+    ACCUMULATOR_TYPE group_mean = group_sum / TO_ACCUMULATOR_TYPE(group_size);
+
+    // Write the group mean back to internal_mean
+    if (worker_block_idx == 0 && (f_base + in_data_set_idx) < INPUT0_FEATURE_NUM) {
         uint bf = b * INPUT0_FEATURE_NUM + f_base + in_data_set_idx;
-        internal_mean[bf] = mean;
+        internal_mean[bf] = group_mean;
+        local_mean[get_local_linear_id()] = group_mean;
     }
-}
-#elif GROUP_NORM_KERNEL_GROUP_MEAN
-KERNEL(calc_mean_per_group)(
-    __global ACCUMULATOR_TYPE* internal_mean
-) {
-    const uint data_idx = get_global_id(0) + get_global_id(1) * GWS0;
-    const uint num_workers = LWS0;
-    const uint group_size = GWS0 / NUM_GROUPS;
-    const uint items_num = group_size / num_workers;
 
-    if ((data_idx % group_size) < num_workers) {
-        ACCUMULATOR_TYPE my_sum = ACCUMULATOR_VAL_ZERO;
-        for (uint i = 0; i < items_num; ++i) {
-            my_sum += internal_mean[data_idx + num_workers * i];
-        }
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-        ACCUMULATOR_TYPE mean = work_group_reduce_add(my_sum);
-        mean /= TO_ACCUMULATOR_TYPE(group_size);
-        for (uint i = 0; i < items_num; ++i) {
-            internal_mean[data_idx + num_workers * i] = mean;
-        }
-    }
-}
-#elif GROUP_NORM_KERNEL_FEATURE_VAR
-REQD_SUB_GROUP_SIZE(SIMD)
-KERNEL(calc_var_per_feature)(
-    OPTIONAL_SHAPE_INFO_ARG
-    const __global INPUT0_TYPE* input,
-    const __global ACCUMULATOR_TYPE* internal_mean,
-    __global ACCUMULATOR_TYPE* internal_variance
-) {
-    const uint data_set_idx = get_global_id(1);     // batch * feature split
-    const uint in_data_set_idx = get_global_id(0);
-    const uint workers_per_dataset = LWS0 / FSV;    // 16 datasets are handled by one local workgroup
-    const uint data_set_size = INPUT0_SIZE_X * INPUT0_SIZE_Y;
-    const uint items_num = data_set_size / workers_per_dataset;
-    const uint leftovers = data_set_size - (items_num * workers_per_dataset);
-
-    const uint INPUT0_ALIGNED_FEATURE_NUM = ALIGN(INPUT0_FEATURE_NUM, FSV);
-    const uint b = (data_set_idx * FSV) / INPUT0_ALIGNED_FEATURE_NUM;
-    const uint f_base = (data_set_idx * FSV) % INPUT0_ALIGNED_FEATURE_NUM;
-    const uint data_set_offset = INPUT0_GET_INDEX(b, f_base, 0, 0);
-    const uint my_data_offset = data_set_offset + in_data_set_idx;
-
+    __local ACCUMULATOR_TYPE local_variance[NUM_GROUPS];
     __local ACCUMULATOR_TYPE var_per_feature[SLM_SIZE];
 
-    uint bf = b * INPUT0_FEATURE_NUM + f_base + get_sub_group_local_id();
-
-    ACCUMULATOR_TYPE mean = internal_mean[bf];
     ACCUMULATOR_TYPE variance = ACCUMULATOR_VAL_ZERO;
-
     for (uint i = 0; i < items_num; ++i) {
         ACCUMULATOR_TYPE tmp = TO_ACCUMULATOR_TYPE(input[my_data_offset + i * workers_per_dataset * FSV]);
-        tmp -= mean;
+        tmp -= group_mean;
         variance = fma(tmp, tmp, variance);
     }
 
     if (in_data_set_idx < leftovers) {
         ACCUMULATOR_TYPE tmp = TO_ACCUMULATOR_TYPE(input[my_data_offset + items_num * workers_per_dataset * FSV + in_data_set_idx]);
-        tmp -= mean;
+        tmp -= group_mean;
         variance = fma(tmp, tmp, variance);
     }
 
     var_per_feature[in_data_set_idx] = variance;
-    const uint num_local_workers = LWS0;
-    const uint worker_block_idx = in_data_set_idx / FSV;
-    uint reduce_add_level = 1;
+    reduce_add_level = 1;
     while ((SLM_SIZE / FSV) > reduce_add_level) {
         barrier(CLK_LOCAL_MEM_FENCE);
         if (worker_block_idx % (reduce_add_level * 2) == 0 && (in_data_set_idx + FSV * reduce_add_level) < num_local_workers) {
@@ -131,30 +109,23 @@ KERNEL(calc_var_per_feature)(
 
     if (worker_block_idx == 0 && (f_base + get_sub_group_local_id()) < INPUT0_FEATURE_NUM) {
         variance = var_per_feature[in_data_set_idx] / TO_ACCUMULATOR_TYPE(data_set_size);
-        internal_variance[bf] = variance;
+        local_variance[get_local_linear_id()] = variance;
     }
-}
-#elif GROUP_NORM_KERNEL_GROUP_VAR
-KERNEL(calc_var_per_group)(
-    __global ACCUMULATOR_TYPE* internal_variance
-) {
-    const uint data_idx = get_global_id(0) + get_global_id(1) * GWS0;
-    const uint num_workers = LWS0;
-    const uint group_size = GWS0 / NUM_GROUPS;
-    const uint items_num = group_size / num_workers;
 
-    if ((data_idx % group_size) < num_workers) {
-        ACCUMULATOR_TYPE my_variance = ACCUMULATOR_VAL_ZERO;
-        for (uint i = 0; i < items_num; ++i) {
-            my_variance += internal_variance[data_idx + num_workers * i];
-        }
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-        ACCUMULATOR_TYPE variance = work_group_reduce_add(my_variance);
-        variance /= TO_ACCUMULATOR_TYPE(group_size);
-        variance = native_powr(variance + TO_ACCUMULATOR_TYPE(EPSILON), -0.5f);
-        for (uint i = 0; i < items_num; ++i) {
-            internal_variance[data_idx + num_workers * i] = variance;
-        }
+    ACCUMULATOR_TYPE my_variance = ACCUMULATOR_VAL_ZERO;
+    if (worker_block_idx == 0 && (f_base + in_data_set_idx) < INPUT0_FEATURE_NUM) {
+        my_variance += local_variance[get_local_linear_id()];
+    }
+
+    ACCUMULATOR_TYPE variance2 = work_group_reduce_add(my_variance);
+    variance2 /= TO_ACCUMULATOR_TYPE(group_size);
+    variance2 = native_powr(variance2 + TO_ACCUMULATOR_TYPE(EPSILON), -0.5f);
+
+    if (worker_block_idx == 0 && (f_base + in_data_set_idx) < INPUT0_FEATURE_NUM) {
+        uint bf = b * INPUT0_FEATURE_NUM + f_base + in_data_set_idx;
+        internal_variance[bf] = variance2;
     }
 }
 #elif GROUP_NORM_KERNEL_FINAL
