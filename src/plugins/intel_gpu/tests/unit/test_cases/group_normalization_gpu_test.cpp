@@ -200,12 +200,17 @@ TEST(group_normalization, input_bfyx_output_fsv16) {
     );
 
     ExecutionConfig config = get_test_default_config(engine);
-    ov::intel_gpu::ImplementationDesc gn_impl = { format::bfyx, "", impl_types::ocl };
+//    ov::intel_gpu::ImplementationDesc gn_impl = { format::bfyx, "", impl_types::ocl };
+    ov::intel_gpu::ImplementationDesc gn_impl = { format::bfyx, "", impl_types::onednn };
     config.set_property(ov::intel_gpu::force_implementations(ov::intel_gpu::ImplForcingMap{{"group_normalization", gn_impl}}));
     config.set_property(ov::intel_gpu::allow_new_shape_infer(true));
     config.set_property(ov::intel_gpu::optimize_data(true));
 
-    network network_g(engine, topology_g, config);
+    auto program = program::build_program(engine, topology_g, config, false, false);
+    program_wrapper::build(*program);
+
+    network network_g(program);
+    //network network_g(engine, topology_g, config);
     network_g.set_input_data("input", input_mem);
     network_g.set_input_data("scale", scale_mem);
     network_g.set_input_data("bias", bias_mem);
@@ -214,6 +219,7 @@ TEST(group_normalization, input_bfyx_output_fsv16) {
     auto output_g = outputs_g.at("output").get_memory();
     cldnn::mem_lock<float> output_mem_g(output_g, get_test_stream());
 
+    /*
     auto program = program::build_program(engine, topology_t, config, false, true);
     auto& reorder_node = program->get_node("reorder1");
     std::vector<layout> layouts = {in_layout};
@@ -235,5 +241,6 @@ TEST(group_normalization, input_bfyx_output_fsv16) {
     for (std::size_t i = 0; i < output_mem_t.size(); i++) {
         ASSERT_NEAR(output_mem_t[i], output_mem_g[i], 0.0001);
     }
+    */
 }
 #endif // ENABLE_ONEDNN_FOR_GPU

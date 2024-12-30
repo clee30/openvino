@@ -40,6 +40,7 @@
 #include "permute_inst.h"
 #include "dft_inst.h"
 #include "lstm_seq_inst.h"
+#include "group_normalization_inst.h"
 #include "to_string_utils.h"
 #include <vector>
 #include <memory>
@@ -1126,7 +1127,7 @@ format layout_optimizer::get_expected_format(quantize_node const& node) {
 
 bool layout_optimizer::is_primitive_implemented_for_onednn(program_node& node) {
     if (node.is_type<fully_connected>() || node.is_type<gemm>() || node.is_type<pooling>() ||
-        node.is_type<convolution>() || node.is_type<deconvolution>() ||
+        node.is_type<convolution>() || node.is_type<deconvolution>() || node.is_type<group_normalization>() ||
         node.is_type<reduce>() || node.is_type<reorder>() || node.is_type<concatenation>() || node.is_type<lstm_seq>()) {
         return true;
     }
@@ -1164,6 +1165,11 @@ impl_types layout_optimizer::get_forced_impl_type_by_config(program_node& node) 
                 if (forced_impl_type == "concat:ocl")
                     return impl_types::ocl;
                 else if (forced_impl_type == "concat:onednn")
+                    return impl_types::onednn;
+            } else if (node.is_type<group_normalization>()) {
+                if (forced_impl_type == "group_normalization:ocl")
+                    return impl_types::ocl;
+                else if (forced_impl_type == "group_normalization:onednn")
                     return impl_types::onednn;
             }
 
@@ -1433,12 +1439,13 @@ void layout_optimizer::add_all_onednn_impls_optimization_attribute() {
     enable_onednn_for<pooling>();
     enable_onednn_for<reduce>();
     enable_onednn_for<reorder>();
+    enable_onednn_for<group_normalization>();
 }
 
 bool layout_optimizer::has_all_enabled_onednn_impls_optimization_attribute() {
     return is_enabled_onednn_for<concatenation>() && is_enabled_onednn_for<convolution>() && is_enabled_onednn_for<deconvolution>() &&
         is_enabled_onednn_for<fully_connected>() && is_enabled_onednn_for<gemm>() && is_enabled_onednn_for<lstm_seq>() &&
-        is_enabled_onednn_for<pooling>() && is_enabled_onednn_for<reduce>() && is_enabled_onednn_for<reorder>();
+        is_enabled_onednn_for<pooling>() && is_enabled_onednn_for<reduce>() && is_enabled_onednn_for<reorder>() && is_enabled_onednn_for<group_normalization>();
 }
 
 void layout_optimizer::set_value_onednn(primitive_type_id p_type, bool val) {

@@ -153,6 +153,7 @@ REGISTER_IMPLS(shape_of);
 REGISTER_IMPLS(strided_slice);
 REGISTER_IMPLS(tile);
 REGISTER_IMPLS(fake_convert);
+REGISTER_IMPLS(group_normalization);
 
 REGISTER_DEFAULT_IMPLS(assign, CPU_S, CPU_D);
 REGISTER_DEFAULT_IMPLS(read_value, CPU_S, CPU_D);
@@ -178,7 +179,6 @@ REGISTER_DEFAULT_IMPLS(experimental_detectron_topk_rois, OCL_S);
 REGISTER_DEFAULT_IMPLS(gather_elements, OCL_S, OCL_D);
 REGISTER_DEFAULT_IMPLS(generate_proposals, OCL_S);
 REGISTER_DEFAULT_IMPLS(grid_sample, OCL_S);
-REGISTER_DEFAULT_IMPLS(group_normalization, OCL_S, OCL_D);
 REGISTER_DEFAULT_IMPLS(kv_cache, OCL_S, OCL_D);
 REGISTER_DEFAULT_IMPLS(lrn, OCL_S);
 REGISTER_DEFAULT_IMPLS(multiclass_nms, OCL_S);
