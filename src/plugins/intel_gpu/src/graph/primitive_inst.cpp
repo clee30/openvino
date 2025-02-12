@@ -518,13 +518,23 @@ kernel_impl_params primitive_inst::get_fake_aligned_params_if_possible(kernel_im
     if (dev_info.supports_immad && dev_info.dev_type == device_type::integrated_gpu) {
         // Check whether the input node has enough space for output data. Otherwise, fake alignment is not possible due to page fault
         // i.e. predecessor node was supposed be increased already
+
         if (get_node().is_type<fully_connected>() && dependencies().size() > 0 && dep_memory(0).get_layout().is_static()
-            && dep_memory(0).count() < updated_params.input_layouts[0].count()) {
-            GPU_DEBUG_TRACE_DETAIL << "Roll back fake_aligned params for " << id()
-                << "  allocated: " << dep_memory(0).count()
-                << "  required: " << updated_params.input_layouts[0].count()
-                << std::endl;
-            updated_params = *_impl_params;
+            && dep_memory(0).count() < updated_params.input_layouts[0].count()
+            ) {
+              //const auto& orig_input_layout = orig_impl_param.get_input_layout();
+              //auto input_shape = orig_input_layout.get_partial_shape().to_shape();
+              //auto batch_size = std::accumulate(input_shape.begin(),
+              //  input_shape.end() - 1,
+              //  size_t{1},
+              //  std::multiplies<size_t>());
+              //if (batch_size > 1) {
+                GPU_DEBUG_TRACE_DETAIL << "Roll back fake_aligned params for " << id()
+                    << "  allocated: " << dep_memory(0).count()
+                    << "  required: " << updated_params.input_layouts[0].count()
+                    << std::endl;
+                updated_params = *_impl_params;
+              //}
         }
     }
     return updated_params;

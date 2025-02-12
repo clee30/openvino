@@ -659,6 +659,9 @@ JitConstants FullyConnected_bf_tiled::GetJitConstants(const fully_connected_para
     size_t tile_k_ofm_packed = tile_k_ofm;
     size_t quantize_grp_size = get_dynamic_quantize_group_size(params);
 
+    auto input_buffer_length = std::max(params.inputs[0].PhysicalSize(), get_input_bf_size(params).second);
+    jit.AddConstant(MakeJitConstant("INPUT_BUFFER_LENGTH", input_buffer_length));
+
     if (is_swiglu_fused(params)) {
         auto split_length = params.fused_ops[0].GetOpParams<swiglu_fuse_params>()->split_length;
         auto split_to_glu_idx = params.fused_ops[0].GetOpParams<swiglu_fuse_params>()->split_to_glu_idx;

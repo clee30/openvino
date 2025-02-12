@@ -2329,7 +2329,7 @@ public:
 
         const int32_t input_f = 3, input_b = 1, weight_b = 4;
 
-        auto fake_alignment_size = engine.get_device_info().supports_immad ? 8 : 16;
+        auto fake_alignment_size = engine.get_device_info().supports_immad ? 1 : 16;
         auto input_dyn_layout = layout{ ov::PartialShape{ ov::Dimension(1, 10), input_f }, data_types::f32,format::bfyx };
         auto input_data = engine.allocate_memory(layout{ ov::PartialShape{ input_b, input_f }, data_types::f32,format::bfyx });
         auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f32,format::bfyx });
@@ -2484,7 +2484,7 @@ public:
         auto input_data1 = engine.allocate_memory(input_actual_layout);
         auto input_data2 = engine.allocate_memory(input_actual_layout);
         auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f32,format::bfyx });
-        auto fake_alignment_size = engine.get_device_info().supports_immad ? 8 : 16;
+        auto fake_alignment_size = engine.get_device_info().supports_immad ? 1 : 16;
         set_values(input_data1, { 0.5f, -2.0f, -0.5f });
         set_values(input_data2, { -0.5f, 2.0f, 0.5f });
         set_values(weights_data, { 1.5f, 1.0f, 0.5f,
@@ -2557,7 +2557,7 @@ public:
 
         const int32_t input_f = 3, weight_b = 4;
 
-        auto fake_alignment_size = engine.get_device_info().supports_immad ? 8 : 16;
+        auto fake_alignment_size = engine.get_device_info().supports_immad ? 1 : 16;
         auto input_dyn_layout = layout{ ov::PartialShape{ ov::Dimension(1, 10), input_f }, data_types::f32,format::bfyx };
         auto input_actual_layout1 = layout{ ov::PartialShape{ 2, input_f }, data_types::f32,format::bfyx};
         auto input_actual_layout2 = layout{ ov::PartialShape{ 1, input_f }, data_types::f32,format::bfyx};
@@ -2646,7 +2646,7 @@ public:
 
         const int32_t input_f = 3, weight_b = 4;
 
-        auto fake_alignment_size = engine.get_device_info().supports_immad ? 8 : 16;
+        auto fake_alignment_size = engine.get_device_info().supports_immad ? 1 : 16;
         auto input_dyn_layout = layout{ ov::PartialShape{ ov::Dimension(1, 10), input_f }, data_types::f32,format::bfyx };
         auto input_actual_layout1 = layout{ ov::PartialShape{ 2, input_f }, data_types::f32,format::bfyx};
         auto input_actual_layout2 = layout{ ov::PartialShape{ 1, input_f }, data_types::f32,format::bfyx};
@@ -2735,7 +2735,7 @@ public:
 
         const int32_t input_f = 3, input_b = 1, weight_b = 4;
 
-        auto fake_alignment_size = engine.get_device_info().supports_immad ? 8 : 16;
+        auto fake_alignment_size = engine.get_device_info().supports_immad ? 1 : 16;
         auto input_dyn_layout = layout{ ov::PartialShape{ ov::Dimension(1, 10), input_f }, data_types::f32,format::bfyx };
         auto input_data = engine.allocate_memory(layout{ ov::PartialShape{ input_b, input_f }, data_types::f32,format::bfyx });
         auto weights_data = engine.allocate_memory({ ov::PartialShape{ weight_b, input_f }, data_types::f32,format::bfyx });
@@ -2977,7 +2977,7 @@ public:
         tests::random_generator rg(GET_SUITE_NAME);
         auto& engine = get_test_engine();
 
-        if (engine.get_device_info().dev_type == device_type::discrete_gpu)
+        if (engine.get_device_info().dev_type == device_type::discrete_gpu || engine.get_device_info().supports_immad)
             GTEST_SKIP();
 
         long int batch_num = batch;

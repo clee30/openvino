@@ -356,7 +356,8 @@ inline void FUNC(fc_bf_tiled_kernel_default)(
     for (uint ni = 0; ni < iterations; ++ni) {
         // Load input.
         #define LOAD_IN_0(bi) do {                                  \
-                in_0[bi] = INPUT_BLOCK_READ(input, input_offset);   \
+                if ((INPUT0_LENGTH == 0) || (input_offset < INPUT_BUFFER_LENGTH)) \
+                  in_0[bi] = INPUT_BLOCK_READ(input, input_offset); \
                 input_offset += TILE_IN_B_PITCH;                    \
             } while (false)
 
@@ -628,9 +629,11 @@ inline void FUNC(fc_bf_tiled_kernel_default)(
     #define LEFTOVER_IFM               (MAIN_LOOP_ELEMENTS_COUNT % (TILE_IFM * SIMD))
     {
         #define LOAD_IN_0(bi) do {                                  \
-                in_0[bi] = INPUT_BLOCK_READ(input, input_offset);   \
+                 if ((INPUT0_LENGTH == 0) || (input_offset < INPUT_BUFFER_LENGTH)) \
+                    in_0[bi] = INPUT_BLOCK_READ(input, input_offset);   \
                 input_offset += TILE_IN_B_PITCH;                    \
             } while (false)
+               // if (input_offset < INPUT0_LENGTH)                   
 
         CONST_LOOP(TILE_B, LOAD_IN_0);
         #undef LOAD_IN_0

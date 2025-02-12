@@ -267,12 +267,30 @@ kernel_impl_params fully_connected_inst::get_fake_aligned_params(kernel_impl_par
         }
 
         size_t fake_align_base = 8;
+
         if (orig_impl_param.dev_type == cldnn::device_type::integrated_gpu) {
             auto weights_layout_dt = orig_impl_param.weights_layout.value().data_type;
             auto is_4bit = weights_layout_dt == data_types::i4 || weights_layout_dt == data_types::u4;
             auto is_extra_alignment_needed = batch_size >= 256;
-            fake_align_base = is_4bit && is_extra_alignment_needed ? 64 : 16;
+            fake_align_base = is_4bit && is_extra_alignment_needed ? 64 : 8;
+
+            /*
+            const auto supports_immad = node.get_program().get_engine().get_device_info().supports_immad;
+            if (supports_immad && fake_align_base == 16) {
+                fake_align_base = 8;
+            }
+            */
         }
+
+        /*
+        bool hasMultiple = any_of(input_shape.begin(), input_shape.end(), [fake_align_base](int num) {
+            return num % fake_align_base == 0;
+        });
+
+        if (hasMultiple) {
+            return std::move(orig_impl_param);
+        }
+        */
 
         std::fill(input_shape.begin(), input_shape.end() - 1, 1);
         std::fill(output_shape.begin(), output_shape.end() - 1, 1);
