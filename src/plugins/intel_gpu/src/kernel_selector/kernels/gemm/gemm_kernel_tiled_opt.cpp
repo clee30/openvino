@@ -443,6 +443,9 @@ bool GemmKernelTiledOpt::Validate(const Params& params) const {
     if (gmm_params.has_dynamic_inputs() && !gmm_params.is_shape_agnostic)
         return false;
 
+    if (gmm_params.has_dynamic_inputs() && !gmm_params.has_dynamic_outputs())
+        return false;
+
     for (size_t i = 1; i < num_inputs; i++)
         if (gmm_params.inputs[0].GetDType() != gmm_params.inputs[i].GetDType())
             return false;
