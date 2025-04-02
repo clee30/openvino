@@ -159,6 +159,8 @@ KERNEL(sdpa_ref)(
 #else
     const OUTPUT_TYPE scale_val = OUTPUT_VAL_ONE / sqrt(TO_OUTPUT_TYPE(INPUT1_SIZE_X));
 #endif
+    if (get_global_linear_id() == 0)
+        printf("in sdpa_ref\n");
 
     // Process 1*seq_len elements (Gemm1 + SoftMax) using a single work item, saving results to tmp_buf and
     // reusing them between all work items within a single workgroup for Gemm2 calculations.

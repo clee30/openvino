@@ -23,27 +23,30 @@ KERNEL(pa_kv_cache_rotate)(
     // Input shapes:
     // rotated_block_indices: [num_blocks_to_rotate]
     // rotation_deltas: [num_blocks_to_rotate, PAGED_ATTENTION_BLOCK_SIZE] || [num_blocks_to_rotate, 1]
-    // rotation_trig_lut: [max_num_batched_tokens / PAGED_ATTENTION_BLOCK_SIZE, HEAD_SIZE] || [max_num_batched_tokens, HEAD_SIZE]
-    // key_cache: [num_blocks, HEADS_NUM, HEAD_SIZE, PAGED_ATTENTION_BLOCK_SIZE]
+    // rotation_trig_lut: [max_num_batched_tokens / PAGED_ATTENTION_BLOCK_SIZE, V_HEAD_SIZE] || [max_num_batched_tokens, V_HEAD_SIZE]
+    // key_cache: [num_blocks, HEADS_NUM, V_HEAD_SIZE, PAGED_ATTENTION_BLOCK_SIZE]
 
     // Output shapes:
-    // key_cache (updated): [num_blocks, HEADS_NUM, HEAD_SIZE, PAGED_ATTENTION_BLOCK_SIZE]
+    // key_cache (updated): [num_blocks, HEADS_NUM, V_HEAD_SIZE, PAGED_ATTENTION_BLOCK_SIZE]
+
+//    if (get_global_linear_id() == 0)
+//        printf("in pa_kv_cache_rotate\n");
 
     const uint head_idx = get_global_id(1);
     const uint block_idx = get_global_id(2);
     const uint sglid = get_sub_group_local_id();
     const uint sgid = get_sub_group_id();
 
-    __local INPUT2_TYPE rotation_coefficients[HEAD_SIZE][PAGED_ATTENTION_BLOCK_SIZE];
+    __local INPUT2_TYPE rotation_coefficients[V_HEAD_SIZE][PAGED_ATTENTION_BLOCK_SIZE];
 
     const bool per_token_rotation = INPUT1_FEATURE_NUM == PAGED_ATTENTION_BLOCK_SIZE;
 
     if (per_token_rotation) {
         // Need to load HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE coefficients in total, each subgroup loads SUBGROUP_SIZE values
-        for (uint i = sgid; i < HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE / SUBGROUP_SIZE; i += SUBGROUPS_PER_WG) {
-            const uint token_idx = (i / (HEAD_SIZE / SUBGROUP_SIZE));
-            const uint rotation_trig_lut_start_offset = rotation_deltas[block_idx * INPUT1_FEATURE_NUM + token_idx] * HEAD_SIZE;
-            const uint inner_offset = (i % (HEAD_SIZE / SUBGROUP_SIZE)) * SUBGROUP_SIZE;
+        for (uint i = sgid; i < V_HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE / SUBGROUP_SIZE; i += SUBGROUPS_PER_WG) {
+            const uint token_idx = (i / (V_HEAD_SIZE / SUBGROUP_SIZE));
+            const uint rotation_trig_lut_start_offset = rotation_deltas[block_idx * INPUT1_FEATURE_NUM + token_idx] * V_HEAD_SIZE;
+            const uint inner_offset = (i % (V_HEAD_SIZE / SUBGROUP_SIZE)) * SUBGROUP_SIZE;
             const uint rotation_trig_lut_offset = rotation_trig_lut_start_offset + inner_offset;
 
             INPUT2_TYPE coefficient = rotation_trig_lut[rotation_trig_lut_offset + sglid];
@@ -52,9 +55,9 @@ KERNEL(pa_kv_cache_rotate)(
         }
     } else {
         // Need to load HEAD_SIZE coefficients in total, each subgroup loads SUBGROUP_SIZE values
-        for (uint i = sgid; i < HEAD_SIZE / SUBGROUP_SIZE; i += SUBGROUPS_PER_WG) {
+        for (uint i = sgid; i < V_HEAD_SIZE / SUBGROUP_SIZE; i += SUBGROUPS_PER_WG) {
             const uint token_idx = 0;
-            const uint rotation_trig_lut_start_offset = rotation_deltas[block_idx * INPUT1_FEATURE_NUM + token_idx] * HEAD_SIZE;
+            const uint rotation_trig_lut_start_offset = rotation_deltas[block_idx * INPUT1_FEATURE_NUM + token_idx] * V_HEAD_SIZE;
             const uint inner_offset = i * SUBGROUP_SIZE;
             const uint rotation_trig_lut_offset = rotation_trig_lut_start_offset + inner_offset;
 
@@ -72,7 +75,7 @@ KERNEL(pa_kv_cache_rotate)(
     const uint token_offset = block_base_offset + sglid;
 
 #if IS_KV_COMPRESSED
-    const uint comp_offset = block_base_offset + HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE;
+    const uint comp_offset = block_base_offset + V_HEAD_SIZE * PAGED_ATTENTION_BLOCK_SIZE;
     UNCOMPRESSED_TYPE* comp_ptr = key_cache + comp_offset;
     UNCOMPRESSED_TYPE comp_scale = comp_ptr[0 + sglid];
     UNCOMPRESSED_TYPE comp_zp = comp_ptr[PAGED_ATTENTION_BLOCK_SIZE + sglid];
@@ -85,19 +88,19 @@ KERNEL(pa_kv_cache_rotate)(
 #endif
 
     // Apply cache rotation
-    for (uint i = 0; i < HEAD_SIZE / 2; i++) {
+    for (uint i = 0; i < V_HEAD_SIZE / 2; i++) {
         const uint cache_offset = token_offset + i * PAGED_ATTENTION_BLOCK_SIZE;
 
 #if IS_KV_COMPRESSED
         UNCOMPRESSED_TYPE cache_value_first = TO_UNCOMPRESSED_TYPE(key_cache[cache_offset] - comp_zp) * comp_scale;
-        UNCOMPRESSED_TYPE cache_value_second = TO_UNCOMPRESSED_TYPE(key_cache[cache_offset + (HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE] - comp_zp) * comp_scale;
+        UNCOMPRESSED_TYPE cache_value_second = TO_UNCOMPRESSED_TYPE(key_cache[cache_offset + (V_HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE] - comp_zp) * comp_scale;
 #else
         UNCOMPRESSED_TYPE cache_value_first = key_cache[cache_offset];
-        UNCOMPRESSED_TYPE cache_value_second = key_cache[cache_offset + (HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE];
+        UNCOMPRESSED_TYPE cache_value_second = key_cache[cache_offset + (V_HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE];
 #endif
 
         INPUT2_TYPE rotation_value_cos = rotation_coefficients[i][token_coefficient_idx];
-        INPUT2_TYPE rotation_value_sin = rotation_coefficients[i + (HEAD_SIZE / 2)][token_coefficient_idx];
+        INPUT2_TYPE rotation_value_sin = rotation_coefficients[i + (V_HEAD_SIZE / 2)][token_coefficient_idx];
 
         UNCOMPRESSED_TYPE new_cache_value_first = cache_value_first * rotation_value_cos - cache_value_second * rotation_value_sin;
         UNCOMPRESSED_TYPE new_cache_value_second = cache_value_first * rotation_value_sin + cache_value_second * rotation_value_cos;
@@ -107,10 +110,10 @@ KERNEL(pa_kv_cache_rotate)(
         min_value = fmin(fmin(min_value, new_cache_value_first), new_cache_value_second);
 
         rotated_data[(i + 0) * PAGED_ATTENTION_BLOCK_SIZE + sglid] = new_cache_value_first;
-        rotated_data[(i + (HEAD_SIZE / 2)) * PAGED_ATTENTION_BLOCK_SIZE + sglid] = new_cache_value_second;
+        rotated_data[(i + (V_HEAD_SIZE / 2)) * PAGED_ATTENTION_BLOCK_SIZE + sglid] = new_cache_value_second;
 #else
         key_cache[cache_offset] = new_cache_value_first;
-        key_cache[cache_offset + (HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE] = new_cache_value_second;
+        key_cache[cache_offset + (V_HEAD_SIZE / 2) * PAGED_ATTENTION_BLOCK_SIZE] = new_cache_value_second;
 #endif
     }
 
@@ -126,7 +129,7 @@ KERNEL(pa_kv_cache_rotate)(
     // Note: absence of this explicit unrolling directive leads to automatic
     // unrolling and causes registers spill. Set unrolling to a reasonable value manually
     __attribute__((opencl_unroll_hint(8)))
-    for (uint i = 0; i < HEAD_SIZE; i++) {
+    for (uint i = 0; i < V_HEAD_SIZE; i++) {
         OUTPUT_TYPE quantized_res = convert_char_rte(rotated_data[i * PAGED_ATTENTION_BLOCK_SIZE + sglid] * scale + zp);
 
         const uint cache_offset = token_offset + i * PAGED_ATTENTION_BLOCK_SIZE;
