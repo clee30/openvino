@@ -1044,8 +1044,13 @@ clKernelData SDPAKernelMicro::get_kernel_data(const sdpa_params& params, bool is
 
     if (params.conf.is_paged_attention) {
         kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 3}); // subsequence_begins
-        if (params.inputs.size() >= 5)
-            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 4}); // scale
+        if (params.inputs.size() >= 6) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 4}); // k cache
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 5}); // v cache
+         }
+        if (params.inputs.size() >= 7) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::INPUT, 6}); // scale
+        }
 
         kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 3}); // paged attention helper buffer
     } else {

@@ -144,7 +144,9 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
         const global VAL_DATA_T *V,
         global half *A,
 #if IS_PAGED_ATTENTION
-    const __global INPUT3_TYPE* subsequence_begins,
+        const __global INPUT3_TYPE* subsequence_begins,
+        const __global INPUT4_TYPE* key_cache,
+        const __global INPUT5_TYPE* value_cache,
 #endif
 #if WITH_ATTN_MASK
         const global half *msk,
@@ -210,7 +212,11 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 
     /* Subgroup IDs for each GEMM */
     uint sg_i_kq = sg_ij % ugemm_kq_sg_per_wg_m;
+    //uint sg_i_kq = sg_ij % 8;
+
+    //sg_i_kq = get_global_id(1);
     uint sg_j_kq = sg_ij / ugemm_kq_sg_per_wg_m;
+    sg_j_kq = 0;
 
     uint sg_i_vs = sg_ij % ugemm_vs_sg_per_wg_m;
     uint sg_j_vs = sg_ij / ugemm_vs_sg_per_wg_m;
@@ -240,12 +246,25 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 #if IS_PAGED_ATTENTION
     K += subsequence_begin * ldk
        + b0_kv * HEAD_SIZE + INPUT1_PAD_BEFORE_FEATURE_NUM;
+    int divider = get_global_id(1) / 2;
+    uint myoffset = get_global_id(1) % 2 ? 16 * divider + 1 : 16 * divider;
+    //uint myoffset = divider * 16;
+//        sg_i_kq = myoffset;
+//    uint myoffset = sg_i_kq * ugemm_kq_sg_tile_m * 8;
+    key_cache += myoffset;
+    //if (get_global_id(1) == 0)
+    //printf("id=%d-%d-%d sg_ij=%d, global_size 1=%d, query_block_idx=%d, block_start_pos=%d ldk=%d, b0_kv=%d k=%d, D_MAX=%d, d=%d, offset=%d, k val=%f\n", get_global_id(0), get_global_id(1), get_global_id(2),
+    //    get_local_linear_id(), get_global_size(1), query_block_idx, block_start_pos, ldk, b0_kv, k, D_MAX, d, myoffset, key_cache[0]);
     Q += subsequence_begin * ldq
        + b0 * HEAD_SIZE + INPUT0_PAD_BEFORE_FEATURE_NUM;
     V += subsequence_begin * ldv
        + b0_kv * HEAD_SIZE + INPUT2_PAD_BEFORE_FEATURE_NUM;
+    value_cache += get_local_linear_id();
     A += subsequence_begin * lda
        + b0 * HEAD_SIZE;
+    if (get_global_id(0) == 0)
+    printf("id=%d-%d-%d offset=%d, k val=%f ugemm_kq_sg_tile_m=%d\n", get_global_id(0), get_global_id(1), get_global_id(2), myoffset, key_cache[0], ugemm_kq_sg_tile_m);
+    
 #else
     K += (KEY_OFF(b1, b0_kv, 0, 0) + INPUT1_OFFSET) / KEY_ELEMENTS_PER_BYTE;
     Q += (QRY_OFF(b1, b0, 0, 0) + INPUT0_OFFSET);
@@ -425,11 +444,16 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
                     ? nan(0u)
                     : -INFINITY;
 #endif
+     //   if (get_global_id(1) < 32 && get_global_id(0)  == 0)
+     //   printf("id=%d-%d-%d, K=%f, K ptr=%p, sg_ij=%d,  sg_i_kq=%d, sg_j_kq=%d, ugemm_kq_sg_per_wg_n=%d ugemm_kq_sg_tile_m=%d\n", get_global_id(0), get_global_id(1), get_global_id(2),
+     //       key_cache[0], &key_cache[0], sg_ij, sg_i_kq, sg_j_kq, ugemm_kq_sg_per_wg_n, ugemm_kq_sg_tile_m);
 
         /* Calculate S = (K^T) * Q */
         s_tile_type S_tile
-                = ugemm_kq(K, ldk, Q_slm, D_MAX, k, ugemm_kq_wg_tile_n, d, k0,
+//                = ugemm_kq(K, ldk, Q_slm, D_MAX, k, ugemm_kq_wg_tile_n, d, k0,
+                = ugemm_kq(key_cache, ldk, Q_slm, D_MAX, k, ugemm_kq_wg_tile_n, d, k0,
                         0, 0, sg_i_kq, sg_j_kq, (local char *)ugemm_slm
+
 #if KEY_SCALES == QUANTIZE_2D
                         ,
                         K_scales
@@ -444,6 +468,9 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 #endif
                 );
 
+        if (get_global_linear_id() == 0) {
+           printf("S_tile %d=%f\n", 0, S_tile.x[0]);
+        }
 #if KEY_SCALES == QUANTIZE_COMMON
 #define k_scale_op(x) ((x)*k_scale)
         tile_elementwise(S_tile, k_scale_op);
@@ -675,7 +702,8 @@ KERNEL(micro_sdpa)(OPTIONAL_SHAPE_INFO_ARG
 
         /* Accumulate A += V * S */
         a_tile_type A_tile1 = ugemm_vs(
-                V, ldv, S_slm, ugemm_kq_wg_tile_m, d, ugemm_kq_wg_tile_n,
+//                V, ldv, S_slm, ugemm_kq_wg_tile_m, d, ugemm_kq_wg_tile_n,
+                value_cache, 1024, S_slm, ugemm_kq_wg_tile_m, d, ugemm_kq_wg_tile_n,
                 k_chunk, 0, 0, 0, sg_i_vs, sg_j_vs, (local char *)ugemm_slm
 #if VAL_SCALES == QUANTIZE_2D
                 ,

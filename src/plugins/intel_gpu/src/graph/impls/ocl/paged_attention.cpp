@@ -247,6 +247,11 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
                              instance.value_memory_ptr(),
                              instance.subsequence_begins_memory_ptr() };
 
+            if (use_micro_sdpa) {
+                args.inputs.push_back(instance.key_cache_memory_ptr());
+                args.inputs.push_back(instance.value_cache_memory_ptr());
+            }
+
             if (!desc->scale_val.has_value()) {
                 args.inputs.push_back(instance.input_memory_ptr(9));
             }
@@ -601,7 +606,9 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
 
         if (stage == PagedAttentionStage::GENERATE || stage == PagedAttentionStage::MIXED || has_scores_output) {
             dep_events = res_events;
-            execute_stage(dep_events, instance, res_events, Stage::PA_SDPA, is_mixed_mode);
+            //execute_stage(dep_events, instance, res_events, Stage::PA_SDPA, is_mixed_mode);
+            //hack
+            execute_stage(dep_events, instance, res_events, Stage::SDPA, is_mixed_mode);
         }
 
         return instance.get_network().get_stream().aggregate_events(res_events, res_events.size() > 1);
@@ -849,6 +856,8 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         const auto& key_tensor = input_tensors[PagedAttentionInputIdx::KEY];
         const auto& value_tensor = input_tensors[PagedAttentionInputIdx::VALUE];
         const auto& subsequence_begins_tensor = input_tensors[PagedAttentionInputIdx::SUBSEQUENCE_BEGINS];
+        const auto& key_cache_tensor = input_tensors[PagedAttentionInputIdx::KEY_CACHE];
+        const auto& value_cache_tensor = input_tensors[PagedAttentionInputIdx::VALUE_CACHE];
         const auto& scale_tensor = input_tensors[PagedAttentionInputIdx::SCALE];
         const auto& alibi_tensor = input_tensors[PagedAttentionInputIdx::ALIBI];
 
@@ -856,7 +865,10 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         const auto has_scale_input = !desc->scale_val.has_value();
         const auto has_scores_output = desc->has_scores_output();
 
-        auto inputs_number = 4;
+        // temporary use this, should use use_sdpa_micro
+        auto inputs_number = impl_param.get_device_info().supports_immad ? 6 : 4;
+        //auto inputs_number =  4;
+
         if (has_scale_input)
             inputs_number++;
 
@@ -869,6 +881,11 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         params.inputs[input_idx++] = key_tensor;
         params.inputs[input_idx++] = value_tensor;
         params.inputs[input_idx++] = subsequence_begins_tensor;
+
+        if (impl_param.get_device_info().supports_immad) {
+            params.inputs[input_idx++] = key_cache_tensor;
+            params.inputs[input_idx++] = value_cache_tensor;
+        }
 
         if (has_scale_input)
             params.inputs[input_idx++] = scale_tensor;
@@ -902,18 +919,25 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
             {2, in_offsets_map.at(PagedAttentionInputIdx::VALUE)},
             {3, in_offsets_map.at(PagedAttentionInputIdx::SUBSEQUENCE_BEGINS)},
         };
+
+        if (impl_param.get_device_info().supports_immad) {
+            in_tensor_to_offset_map[4] = in_offsets_map.at(PagedAttentionInputIdx::KEY_CACHE);
+            in_tensor_to_offset_map[5] = in_offsets_map.at(PagedAttentionInputIdx::VALUE_CACHE);
+        }
+
         std::map<size_t, size_t> out_tensor_to_offset_map = {
             {0, out_offsets_map.at(0)},
         };
 
-        input_idx = 4;
+//        input_idx = 4;
+        input_idx = impl_param.get_device_info().supports_immad ? 6 : 4;
         if (has_scale_input)
             in_tensor_to_offset_map.insert({input_idx++, in_offsets_map.at(PagedAttentionInputIdx::SCALE)});
 
         if (has_alibi)
             in_tensor_to_offset_map.insert({input_idx++, in_offsets_map.at(PagedAttentionInputIdx::ALIBI)});
 
-        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::MIXED) && !is_dynamic)
+        if ((stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::GENERATE ||  stage == PagedAttentionStage::MIXED) && !is_dynamic)
             params.conf.paged_attention_aligned_seq_len = get_aligned_seq_len(impl_param, stage, query_block_size);
 
         if (has_scores_output)
@@ -1032,7 +1056,7 @@ struct paged_attention_impl : multi_stage_primitive<paged_attention> {
         auto kv_cache_update_kernel_params = get_kv_cache_update_kernel_params(impl_param, stage, input_tensors, impl_param.is_dynamic());
         (_kernels_data[Stage::KV_CACHE_UPDATE].update_dispatch_data_func)(kv_cache_update_kernel_params, _kernels_data[Stage::KV_CACHE_UPDATE]);
 
-        if (stage == PagedAttentionStage::PREFILL) {
+        if (stage == PagedAttentionStage::PREFILL || stage == PagedAttentionStage::GENERATE) {
             auto sdpa_kernel_params = get_sdpa_kernel_params(impl_param, stage, input_tensors, get_query_block_size(stage), impl_param.is_dynamic());
             (_kernels_data[Stage::SDPA].update_dispatch_data_func)(sdpa_kernel_params, _kernels_data[Stage::SDPA]);
 
