@@ -197,11 +197,23 @@ KernelsData ScatterElementsUpdateKernelRef::GetKernelsData(const Params& params)
     for (int i = 0; i < 2; i++) {
         auto dispatchData = SetDefault(newParams, (i == 1));
         auto entry_point = GetEntryPoint(kernelName, newParams.layerID, params, i);
+        clKernelData& kernel = kd.kernels[i];
 
         if (i == 1) {
             cldnn_jit.AddConstant(MakeJitConstant("IS_SECOND_ITER", "true"));
-            cldnn_jit.AddConstant(MakeJitConstant("COUNT_LIMIT", params.engineInfo.maxLocalMemSize));
             cldnn_jit.AddConstant(MakeJitConstant("COUNT_LENGTH", dispatchData.gws[0] * dispatchData.gws[1] * dispatchData.gws[2]));
+
+            const auto& indices = newParams.inputs[1];
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::LOCAL_MEMORY_SIZE, 0});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::LOCAL_MEMORY_SIZE, 0});
+
+            ScalarDescriptor local_memory_size_scalar;
+            local_memory_size_scalar.t = ScalarDescriptor::Types::UINT32;
+            local_memory_size_scalar.v.u32 = static_cast<uint32_t>(indices.Batch().v *
+                indices.Feature().v * indices.X().v * indices.Y().v * indices.Z().v) * sizeof(indices.GetDType());
+            kernel.params.scalars.clear();
+            kernel.params.scalars.push_back(local_memory_size_scalar);
+
             if (newParams.mode != ScatterUpdateReduction::NONE) {
                 dispatchData.gws = {1, 1, 1};
                 dispatchData.lws = {1, 1, 1};
@@ -209,10 +221,14 @@ KernelsData ScatterElementsUpdateKernelRef::GetKernelsData(const Params& params)
         }
         auto jit = CreateJit(kernelName, cldnn_jit, entry_point);
 
-        clKernelData& kernel = kd.kernels[i];
 
         FillCLKernelData(kernel, dispatchData, params.engineInfo, kernelName, jit, entry_point, "", false, false, 3, GetFusedPrimitiveInputsCount(params), 1,
             params.is_shape_agnostic);
+
+        if (i == 1) {
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::LOCAL_MEMORY_SIZE, 0});
+            kernel.params.arguments.push_back({ArgumentDescriptor::Types::LOCAL_MEMORY_SIZE, 0});
+        }
     }
 
     return {kd};
