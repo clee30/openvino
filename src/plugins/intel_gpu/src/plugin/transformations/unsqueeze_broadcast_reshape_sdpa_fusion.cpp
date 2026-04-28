@@ -16,6 +16,7 @@
 #include "openvino/op/concat.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "openvino/pass/pattern/op/or.hpp"
+#include "openvino/pass/pattern/op/optional.hpp"
 #include "ov_ops/rotary_positional_embeddings.hpp"
 #include "transformations/utils/utils.hpp"
 #include "openvino/core/graph_util.hpp"
@@ -42,10 +43,10 @@ UnsqueezeBroadcastReshapeSDPAFusion::UnsqueezeBroadcastReshapeSDPAFusion() {
     auto input_b_rope_m = wrap_type<ov::op::internal::RoPE>({any_input(), any_input(), any_input()});
     auto input_c_kvcache_m = wrap_type<ov::intel_gpu::op::KVCache>({any_input(), any_input()});
     auto input_c_transpose_m = wrap_type<ov::op::v1::Transpose>({any_input(), any_input()});
-    auto input_c_reshape_m = wrap_type<ov::op::v1::Reshape>({any_input(), any_input()});
+    auto input_c_reshape_m = optional<ov::op::v1::Reshape>({any_input(), any_input()});
 
-    auto concat_b_m = wrap_type<ov::op::v0::Concat>({input_b_rope_m, any_input()});
-    auto concat_c_m = wrap_type<ov::op::v0::Concat>({input_c_reshape_m, any_input()});
+    auto concat_b_m = optional<ov::op::v0::Concat>({input_b_rope_m, any_input()});
+    auto concat_c_m = optional<ov::op::v0::Concat>({input_c_reshape_m, any_input()});
 
     auto pre_reshape_input_b_m = std::make_shared<Or>(OutputVector{input_b_rope_m, concat_b_m});
     auto pre_reshape_input_c_m = std::make_shared<Or>(OutputVector{input_c_transpose_m, input_c_reshape_m, concat_c_m});
@@ -145,14 +146,12 @@ UnsqueezeBroadcastReshapeSDPAFusion::UnsqueezeBroadcastReshapeSDPAFusion() {
         data_inputs.push_back(pattern_map.at(input_a_m).get_node_shared_ptr());               // Q input
         if (pattern_map.find(input_b_kvcache_m) != pattern_map.end())
             data_inputs.push_back(pattern_map.at(input_b_kvcache_m).get_node_shared_ptr());   // K input from KVCache
-        if (pattern_map.find(input_b_rope_m) != pattern_map.end())
-            data_inputs.push_back(pattern_map.at(input_b_rope_m).get_node_shared_ptr());      // K input from RoPE
+        if (pattern_map.find(pre_reshape_input_b_m) != pattern_map.end())
+            data_inputs.push_back(pattern_map.at(pre_reshape_input_b_m).get_node_shared_ptr());  // K input from Concat / RoPE
         if (pattern_map.find(input_c_kvcache_m) != pattern_map.end())
             data_inputs.push_back(pattern_map.at(input_c_kvcache_m).get_node_shared_ptr());   // V input from KVCache
-        if (pattern_map.find(input_c_transpose_m) != pattern_map.end())
-            data_inputs.push_back(pattern_map.at(input_c_transpose_m).get_node_shared_ptr()); // V input from Transpose
-        if (pattern_map.find(input_c_reshape_m) != pattern_map.end())
-            data_inputs.push_back(pattern_map.at(input_c_reshape_m).get_node_shared_ptr()); // V input from Reshape
+        if (pattern_map.find(pre_reshape_input_c_m) != pattern_map.end())
+            data_inputs.push_back(pattern_map.at(pre_reshape_input_c_m).get_node_shared_ptr()); // V input from Transpose / Reshape / Concat
 
         auto sdpa = ov::as_type_ptr<op::SDPA>(m.get_match_root());
         if (pattern_map.find(sdpa_with_attn_mask_m) != pattern_map.end()) {
