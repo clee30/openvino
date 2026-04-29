@@ -45,7 +45,7 @@ UnsqueezeBroadcastReshapeSDPAFusion::UnsqueezeBroadcastReshapeSDPAFusion() {
     auto input_c_transpose_m = wrap_type<ov::op::v1::Transpose>({any_input(), any_input()});
     auto input_c_reshape_m = optional<ov::op::v1::Reshape>({any_input(), any_input()});
 
-    auto concat_b_m = optional<ov::op::v0::Concat>({input_b_rope_m, any_input()});
+    auto concat_b_m = optional<ov::op::v0::Concat>({any_input(), any_input()});
     auto concat_c_m = optional<ov::op::v0::Concat>({input_c_reshape_m, any_input()});
 
     auto pre_reshape_input_b_m = std::make_shared<Or>(OutputVector{input_b_rope_m, concat_b_m});
